@@ -36,6 +36,21 @@ export async function getDoctorUnavailability(token, doctorId, date) {
   return handleResponse(response, 'Unable to load doctor unavailable slots')
 }
 
+export async function getDoctorBookedSlots(token, doctorId, date) {
+  if (!doctorId || !date) {
+    return []
+  }
+
+  const params = new URLSearchParams({ date })
+  const response = await fetch(`${API_BASE_URL}/doctors/${doctorId}/booked-slots?${params.toString()}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+
+  return handleResponse(response, 'Unable to load doctor booked slots')
+}
+
 export async function getMyUnavailability(token) {
   const response = await fetch(`${API_BASE_URL}/doctors/me/unavailability`, {
     headers: {

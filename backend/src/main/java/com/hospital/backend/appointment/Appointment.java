@@ -49,11 +49,8 @@ public class Appointment {
 
     private String notes;
 
-    @Column(length = 30)
-    private String contactNumber;
-
     @Column(nullable = false, length = 30)
-    private String status = "REQUESTED";
+    private String status = "PENDING";
 
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
@@ -127,16 +124,12 @@ public class Appointment {
         this.notes = notes;
     }
 
-    public String getContactNumber() {
-        return contactNumber;
-    }
-
-    public void setContactNumber(String contactNumber) {
-        this.contactNumber = contactNumber;
-    }
-
     public String getStatus() {
         return status;
+    }
+
+    public void setStatus(String status) {
+        this.status = status;
     }
 
     public OffsetDateTime getCreatedAt() {

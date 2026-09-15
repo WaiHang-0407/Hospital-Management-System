@@ -24,6 +24,22 @@ export async function getAdminUsers(token, filters) {
   return data
 }
 
+export async function getAdminUserDetails(token, userId) {
+  const response = await fetch(`${API_BASE_URL}/admin/users/${userId}/details`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+
+  const data = await response.json().catch(() => null)
+
+  if (!response.ok) {
+    throw new Error(getApiErrorMessage(response, data, 'Unable to load user details'))
+  }
+
+  return data
+}
+
 export async function createAdminUser(token, payload) {
   const response = await fetch(`${API_BASE_URL}/admin/users`, {
     method: 'POST',

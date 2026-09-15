@@ -6,13 +6,15 @@ import java.util.UUID;
 
 public record AppointmentResponse(
         UUID id,
+        String patientName,
+        String patientPhone,
+        UUID doctorId,
         String department,
         String preferredDoctor,
         LocalDate appointmentDate,
         LocalTime appointmentTime,
         String reason,
         String notes,
-        String contactNumber,
         String status
 ) {
 }

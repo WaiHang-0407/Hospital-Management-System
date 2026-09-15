@@ -12,8 +12,7 @@ public record DoctorAppointmentRequest(
         @NotNull @FutureOrPresent LocalDate appointmentDate,
         @NotNull LocalTime appointmentTime,
         @NotBlank String reason,
-        String notes,
-        String contactNumber
+        String notes
 ) {
 
     AppointmentRequest toAppointmentRequest() {
@@ -24,8 +23,7 @@ public record DoctorAppointmentRequest(
                 appointmentDate,
                 appointmentTime,
                 reason,
-                notes,
-                contactNumber
+                notes
         );
     }
 }

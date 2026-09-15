@@ -1,18 +1,24 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { cancelAppointment, getMyAppointments, rescheduleAppointment } from '../api/appointmentApi'
 import AdminActivityPanel from './AdminActivityPanel'
+import AdminAppointmentsPanel from './AdminAppointmentsPanel'
+import AdminBillingPanel from './AdminBillingPanel'
 import AdminDepartmentsPanel from './AdminDepartmentsPanel'
+import AdminMedicinesPanel from './AdminMedicinesPanel'
 import AdminModules from './AdminModules'
 import AdminUsersPanel from './AdminUsersPanel'
 import AppointmentBookingForm from './AppointmentBookingForm'
 import AppointmentPanel from './AppointmentPanel'
 import DepartmentPanel from './DepartmentPanel'
 import DoctorWorkspace from './DoctorWorkspace'
+import PatientBillsPanel from './PatientBillsPanel'
+import PatientHome from './PatientHome'
+import PatientPrescriptionsPanel from './PatientPrescriptionsPanel'
 import QuickActions from './QuickActions'
 import Sidebar from './Sidebar'
 import StatGrid from './StatGrid'
 import {
   adminStats,
-  patientAppointments,
   patientStats,
   staffAppointments,
   staffStats,
@@ -24,24 +30,70 @@ function Dashboard({ auth, onLogout }) {
   const isPatient = auth?.roles?.includes('PATIENT')
   const primaryRole = getPrimaryRole(auth)
   const [activePage, setActivePage] = useState('dashboard')
-  const [bookedAppointments, setBookedAppointments] = useState([])
+  const [patientAppointments, setPatientAppointments] = useState([])
+  const [appointmentMessage, setAppointmentMessage] = useState('')
   const visibleStats = isAdmin ? adminStats : isPatient ? patientStats : staffStats
   const visibleAppointments = isPatient
-    ? [...bookedAppointments.map(toAppointmentCard), ...patientAppointments]
+    ? [...patientAppointments]
+        .sort(compareAppointments)
+        .map(toAppointmentCard)
     : staffAppointments
 
+  useEffect(() => {
+    if (!isPatient) {
+      return
+    }
+
+    let ignore = false
+
+    getMyAppointments(auth.token)
+      .then((appointments) => {
+        if (!ignore) {
+          setPatientAppointments(appointments)
+          setAppointmentMessage('')
+        }
+      })
+      .catch((error) => {
+        if (!ignore) {
+          setPatientAppointments([])
+          setAppointmentMessage(error.message)
+        }
+      })
+
+    return () => {
+      ignore = true
+    }
+  }, [auth.token, isPatient])
+
   function addBookedAppointment(appointment) {
-    setBookedAppointments((current) => [appointment, ...current])
+    setPatientAppointments((current) => [appointment, ...current])
+  }
+
+  async function updateAppointment(id, updater) {
+    const updatedAppointment = await updater()
+    setPatientAppointments((current) => current.map((appointment) => (
+      appointment.id === id ? updatedAppointment : appointment
+    )))
+    return updatedAppointment
+  }
+
+  function handleRescheduleAppointment(id, payload) {
+    return updateAppointment(id, () => rescheduleAppointment(auth.token, id, payload))
+  }
+
+  function handleCancelAppointment(id) {
+    return updateAppointment(id, () => cancelAppointment(auth.token, id))
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${isPatient ? 'patient-shell' : 'sidebar-shell'}`}>
       <Sidebar
         activePage={activePage}
         isAdmin={isAdmin}
         isDoctor={isDoctor}
         isPatient={isPatient}
         onPageChange={setActivePage}
+        onLogout={onLogout}
         primaryRole={primaryRole}
       />
 
@@ -53,9 +105,6 @@ function Dashboard({ auth, onLogout }) {
           </div>
           <div className="topbar-actions">
             <span className="role-pill">{auth.roles.join(', ')}</span>
-            <button className="secondary-button" type="button" onClick={onLogout}>
-              Logout
-            </button>
           </div>
         </header>
 
@@ -73,8 +122,56 @@ function Dashboard({ auth, onLogout }) {
       return <AdminDepartmentsPanel token={auth.token} />
     }
 
+    if (isAdmin && activePage === 'appointments') {
+      return <AdminAppointmentsPanel token={auth.token} />
+    }
+
+    if (isAdmin && activePage === 'medicines') {
+      return <AdminMedicinesPanel token={auth.token} />
+    }
+
+    if (isAdmin && activePage === 'billing') {
+      return <AdminBillingPanel token={auth.token} />
+    }
+
     if (isDoctor && (activePage === 'availability' || activePage === 'appointments' || activePage === 'patients')) {
       return <DoctorWorkspace activePage={activePage} token={auth.token} />
+    }
+
+    if (isPatient && activePage === 'dashboard') {
+      return (
+        <PatientHome
+          fullName={auth.fullName}
+          onBookAppointment={() => setActivePage('appointments')}
+        />
+      )
+    }
+
+    if (isPatient && activePage === 'appointments') {
+      return (
+        <section className="dashboard-grid patient-appointments-grid">
+          <AppointmentPanel
+            appointments={visibleAppointments}
+            emptyMessage={appointmentMessage || 'No appointments found.'}
+            isPatient={isPatient}
+            onCancel={handleCancelAppointment}
+            onReschedule={handleRescheduleAppointment}
+          />
+          <AppointmentBookingForm token={auth.token} onBooked={addBookedAppointment} />
+        </section>
+      )
+    }
+
+    if (isPatient && activePage === 'records') {
+      return <PatientPrescriptionsPanel token={auth.token} />
+    }
+
+    if (isPatient && activePage === 'billing') {
+      return <PatientBillsPanel token={auth.token} />
+    }
+
+    if (isPatient && activePage !== 'dashboard') {
+      return <PlaceholderPage title={getPageTitle(activePage, auth, isAdmin, isPatient)} />
     }
 
     if (isAdmin && activePage !== 'dashboard') {
@@ -139,6 +236,18 @@ function getPageTitle(activePage, auth, isAdmin, isPatient) {
     return 'Departments'
   }
 
+  if (isAdmin && activePage === 'appointments') {
+    return 'Appointments'
+  }
+
+  if (isAdmin && activePage === 'medicines') {
+    return 'Medicine'
+  }
+
+  if (isAdmin && activePage === 'billing') {
+    return 'Billing'
+  }
+
   if (isAdmin && activePage === 'approvals') {
     return 'Approvals'
   }
@@ -187,12 +296,31 @@ function getPrimaryRole(auth) {
 
 function toAppointmentCard(appointment) {
   return {
-    time: appointment.appointmentDate,
+    id: appointment.id,
+    date: appointment.appointmentDate,
+    time: appointment.appointmentTime.slice(0, 5),
     patient: appointment.reason,
     doctor: appointment.preferredDoctor || 'Any available doctor',
     type: appointment.department,
-    status: appointment.status,
+    status: formatStatus(appointment.status),
+    rawStatus: appointment.status,
+    doctorId: appointment.doctorId,
   }
+}
+
+function compareAppointments(first, second) {
+  return new Date(`${second.appointmentDate}T${second.appointmentTime}`)
+    - new Date(`${first.appointmentDate}T${first.appointmentTime}`)
+}
+
+function formatStatus(status) {
+  if (!status) {
+    return 'Pending'
+  }
+
+  return status
+    .toLowerCase()
+    .replace(/^\w/, (letter) => letter.toUpperCase())
 }
 
 export default Dashboard

@@ -29,6 +29,7 @@ import org.springframework.web.server.ResponseStatusException;
 public class DoctorController {
 
     private static final Set<LocalTime> ALLOWED_APPOINTMENT_TIMES = Set.of(
+            LocalTime.of(8, 0),
             LocalTime.of(9, 0),
             LocalTime.of(10, 0),
             LocalTime.of(11, 0),
@@ -37,7 +38,9 @@ public class DoctorController {
             LocalTime.of(14, 0),
             LocalTime.of(15, 0),
             LocalTime.of(16, 0),
-            LocalTime.of(17, 0)
+            LocalTime.of(17, 0),
+            LocalTime.of(18, 0),
+            LocalTime.of(19, 0)
     );
 
     private final DoctorRepository doctorRepository;
@@ -89,6 +92,17 @@ public class DoctorController {
                 .toList();
     }
 
+    @GetMapping("/{doctorId}/booked-slots")
+    @PreAuthorize("hasAnyRole('PATIENT', 'ADMIN', 'RECEPTIONIST', 'DOCTOR')")
+    public List<DoctorBookedSlotResponse> doctorBookedSlots(
+            @PathVariable UUID doctorId,
+            @RequestParam LocalDate date
+    ) {
+        return appointmentRepository.findByDoctorIdAndAppointmentDateAndStatusOrderByAppointmentTimeAsc(doctorId, date, "PENDING").stream()
+                .map(appointment -> new DoctorBookedSlotResponse(appointment.getAppointmentTime()))
+                .toList();
+    }
+
     @GetMapping("/me/unavailability")
     @PreAuthorize("hasRole('DOCTOR')")
     public List<DoctorUnavailabilityResponse> myUnavailability(Principal principal) {
@@ -119,10 +133,11 @@ public class DoctorController {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This unavailable slot already exists");
         }
 
-        if (appointmentRepository.existsByDoctorIdAndAppointmentDateAndAppointmentTime(
+        if (appointmentRepository.existsByDoctorIdAndAppointmentDateAndAppointmentTimeAndStatus(
                 doctor.getId(),
                 request.unavailableDate(),
-                request.startTime()
+                request.startTime(),
+                "PENDING"
         )) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This slot already has an appointment");
         }

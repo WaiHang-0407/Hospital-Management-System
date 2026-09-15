@@ -1,13 +1,21 @@
-import { useEffect, useState } from 'react'
-import { createDoctorAppointment, getMyDoctorAppointments } from '../api/appointmentApi'
+import { Fragment, useEffect, useState } from 'react'
+import { completeDoctorAppointment, createDoctorAppointment, getMyDoctorAppointments } from '../api/appointmentApi'
 import {
   addMyUnavailability,
   deleteMyUnavailability,
   getDoctorPatients,
   getMyUnavailability,
 } from '../api/doctorApi'
+import { getAvailableMedicines } from '../api/medicineApi'
+import {
+  createPrescription,
+  deletePrescription,
+  getMyDoctorPrescriptions,
+  updatePrescription,
+} from '../api/prescriptionApi'
 
 const appointmentSlots = [
+  { value: '08:00', label: '8:00 AM - 9:00 AM' },
   { value: '09:00', label: '9:00 AM - 10:00 AM' },
   { value: '10:00', label: '10:00 AM - 11:00 AM' },
   { value: '11:00', label: '11:00 AM - 12:00 PM' },
@@ -17,6 +25,8 @@ const appointmentSlots = [
   { value: '15:00', label: '3:00 PM - 4:00 PM' },
   { value: '16:00', label: '4:00 PM - 5:00 PM' },
   { value: '17:00', label: '5:00 PM - 6:00 PM' },
+  { value: '18:00', label: '6:00 PM - 7:00 PM' },
+  { value: '19:00', label: '7:00 PM - 8:00 PM' },
 ]
 
 const initialUnavailabilityForm = {
@@ -29,28 +39,55 @@ const initialAppointmentForm = {
   appointmentDate: '',
   appointmentTime: '',
   reason: '',
-  contactNumber: '',
   notes: '',
+}
+
+const initialPrescriptionForm = {
+  id: '',
+  appointmentId: '',
+  diagnosis: '',
+  notes: '',
+  items: [
+    {
+      medicineName: '',
+      dosage: '',
+      frequency: '',
+      duration: '',
+      instructions: '',
+    },
+  ],
 }
 
 function DoctorWorkspace({ token, activePage = 'dashboard' }) {
   const [unavailability, setUnavailability] = useState([])
   const [appointments, setAppointments] = useState([])
   const [patients, setPatients] = useState([])
+  const [prescriptions, setPrescriptions] = useState([])
+  const [medicines, setMedicines] = useState([])
   const [availabilityDate, setAvailabilityDate] = useState(getTodayDate())
   const [unavailabilityForm, setUnavailabilityForm] = useState(initialUnavailabilityForm)
   const [appointmentForm, setAppointmentForm] = useState(initialAppointmentForm)
+  const [appointmentFilters, setAppointmentFilters] = useState({ status: 'ALL', date: '', sort: 'LATEST' })
+  const [prescriptionForm, setPrescriptionForm] = useState(initialPrescriptionForm)
   const [message, setMessage] = useState('')
 
   useEffect(() => {
     let ignore = false
 
-    Promise.all([getMyUnavailability(token), getDoctorPatients(token), getMyDoctorAppointments(token)])
-      .then(([unavailabilityData, patientData, appointmentData]) => {
+    Promise.all([
+      getMyUnavailability(token),
+      getDoctorPatients(token),
+      getMyDoctorAppointments(token),
+      getMyDoctorPrescriptions(token),
+      getAvailableMedicines(token),
+    ])
+      .then(([unavailabilityData, patientData, appointmentData, prescriptionData, medicineData]) => {
         if (!ignore) {
           setUnavailability(unavailabilityData)
           setPatients(patientData)
           setAppointments(appointmentData)
+          setPrescriptions(prescriptionData)
+          setMedicines(medicineData)
         }
       })
       .catch((error) => {
@@ -72,6 +109,74 @@ function DoctorWorkspace({ token, activePage = 'dashboard' }) {
   function updateAppointmentForm(event) {
     const { name, value } = event.target
     setAppointmentForm((current) => ({ ...current, [name]: value }))
+  }
+
+  function updateAppointmentFilters(event) {
+    const { name, value } = event.target
+    setAppointmentFilters((current) => ({ ...current, [name]: value }))
+  }
+
+  function startPrescription(appointment) {
+    setPrescriptionForm({
+      ...initialPrescriptionForm,
+      appointmentId: appointment.id,
+    })
+    setMessage('')
+  }
+
+  function startEditPrescription(prescription) {
+    setPrescriptionForm({
+      id: prescription.id,
+      appointmentId: prescription.appointmentId,
+      diagnosis: prescription.diagnosis,
+      notes: prescription.notes || '',
+      items: prescription.items.map((item) => ({
+        medicineName: item.medicineName,
+        dosage: item.dosage,
+        frequency: item.frequency,
+        duration: item.duration,
+        instructions: item.instructions || '',
+      })),
+    })
+    setMessage('')
+  }
+
+  function updatePrescriptionForm(event) {
+    const { name, value } = event.target
+    setPrescriptionForm((current) => ({ ...current, [name]: value }))
+  }
+
+  function updatePrescriptionItem(index, event) {
+    const { name, value } = event.target
+    setPrescriptionForm((current) => ({
+      ...current,
+      items: current.items.map((item, itemIndex) => (
+        itemIndex === index ? { ...item, [name]: value } : item
+      )),
+    }))
+  }
+
+  function addPrescriptionItem() {
+    setPrescriptionForm((current) => ({
+      ...current,
+      items: [
+        ...current.items,
+        {
+          medicineName: '',
+          dosage: '',
+          frequency: '',
+          duration: '',
+          instructions: '',
+        },
+      ],
+    }))
+  }
+
+  function removePrescriptionItem(index) {
+    setPrescriptionForm((current) => ({
+      ...current,
+      items: current.items.filter((_, itemIndex) => itemIndex !== index),
+    }))
   }
 
   async function submitUnavailability(event) {
@@ -116,6 +221,58 @@ function DoctorWorkspace({ token, activePage = 'dashboard' }) {
       setAppointments((current) => [...current, appointment])
       setAppointmentForm(initialAppointmentForm)
       setMessage('Appointment created.')
+    } catch (error) {
+      setMessage(error.message)
+    }
+  }
+
+  async function markAppointmentCompleted(id) {
+    setMessage('')
+
+    try {
+      const completedAppointment = await completeDoctorAppointment(token, id)
+      setAppointments((current) => current.map((appointment) => (
+        appointment.id === id ? completedAppointment : appointment
+      )))
+      setMessage('Appointment marked as completed.')
+    } catch (error) {
+      setMessage(error.message)
+    }
+  }
+
+  async function submitPrescription(event) {
+    event.preventDefault()
+    setMessage('')
+
+    try {
+      const prescription = prescriptionForm.id
+        ? await updatePrescription(token, prescriptionForm.id, prescriptionPayload(prescriptionForm))
+        : await createPrescription(token, prescriptionPayload(prescriptionForm))
+
+      setPrescriptions((current) => {
+        if (prescriptionForm.id) {
+          return current.map((item) => (item.id === prescription.id ? prescription : item))
+        }
+
+        return [prescription, ...current]
+      })
+      setPrescriptionForm(initialPrescriptionForm)
+      setMessage(prescriptionForm.id ? 'Prescription updated.' : 'Prescription saved.')
+    } catch (error) {
+      setMessage(error.message)
+    }
+  }
+
+  async function removePrescription(id) {
+    setMessage('')
+
+    try {
+      await deletePrescription(token, id)
+      setPrescriptions((current) => current.filter((prescription) => prescription.id !== id))
+      if (prescriptionForm.id === id) {
+        setPrescriptionForm(initialPrescriptionForm)
+      }
+      setMessage('Prescription deleted.')
     } catch (error) {
       setMessage(error.message)
     }
@@ -243,7 +400,7 @@ function DoctorWorkspace({ token, activePage = 'dashboard' }) {
 
   function renderAppointmentPanel() {
     return (
-      <article className="panel">
+      <article className="panel doctor-appointment-create-panel">
         <div className="panel-header">
           <div>
             <p className="eyebrow">Appointments</p>
@@ -307,11 +464,6 @@ function DoctorWorkspace({ token, activePage = 'dashboard' }) {
           </label>
 
           <label>
-            Contact Number
-            <input name="contactNumber" onChange={updateAppointmentForm} value={appointmentForm.contactNumber} />
-          </label>
-
-          <label>
             Notes
             <textarea name="notes" onChange={updateAppointmentForm} rows="3" value={appointmentForm.notes} />
           </label>
@@ -325,38 +477,261 @@ function DoctorWorkspace({ token, activePage = 'dashboard' }) {
   }
 
   function renderIncomingAppointmentsPanel() {
-    const incomingAppointments = [...appointments]
-      .filter((appointment) => isIncomingAppointment(appointment.appointmentDate, appointment.appointmentTime))
-      .sort(compareAppointments)
+    const prescriptionsByAppointmentId = new Map(
+      prescriptions.map((prescription) => [prescription.appointmentId, prescription]),
+    )
+    const visibleAppointments = appointments
+      .filter((appointment) => {
+        const statusMatches = appointmentFilters.status === 'ALL' || appointment.status === appointmentFilters.status
+        const dateMatches = !appointmentFilters.date || appointment.appointmentDate === appointmentFilters.date
+
+        return statusMatches && dateMatches
+      })
+      .sort((first, second) => compareAppointments(first, second, appointmentFilters.sort))
 
     return (
-      <article className="panel">
+      <article className="panel doctor-schedule-panel">
         <div className="panel-header">
           <div>
-            <p className="eyebrow">Incoming</p>
-            <h2>Upcoming Appointments</h2>
+            <p className="eyebrow">Schedule</p>
+            <h2>Appointments</h2>
           </div>
         </div>
 
-        <div className="appointment-list">
-          {incomingAppointments.length === 0 ? (
-            <p className="empty-note">No incoming appointments.</p>
+        <div className="appointment-filter-row">
+          <label>
+            Status
+            <select name="status" onChange={updateAppointmentFilters} value={appointmentFilters.status}>
+              <option value="ALL">All statuses</option>
+              <option value="PENDING">Pending</option>
+              <option value="COMPLETED">Completed</option>
+              <option value="CANCELLED">Cancelled</option>
+            </select>
+          </label>
+          <label>
+            Date
+            <input
+              name="date"
+              onChange={updateAppointmentFilters}
+              type="date"
+              value={appointmentFilters.date}
+            />
+          </label>
+          <label>
+            Sort
+            <select name="sort" onChange={updateAppointmentFilters} value={appointmentFilters.sort}>
+              <option value="LATEST">Latest first</option>
+              <option value="OLDEST">Oldest first</option>
+            </select>
+          </label>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => setAppointmentFilters({ status: 'ALL', date: '', sort: 'LATEST' })}
+          >
+            Clear
+          </button>
+        </div>
+
+        <div className="appointment-table-wrap">
+          {visibleAppointments.length === 0 ? (
+            <p className="empty-note">No appointments.</p>
           ) : (
-            incomingAppointments.map((appointment) => (
-              <div className="appointment-row" key={appointment.id}>
-                <time>{formatAppointmentTime(appointment)}</time>
-                <div>
-                  <strong>{appointment.reason}</strong>
-                  <span>{appointment.department}</span>
-                </div>
-                <span className="status-chip">{appointment.status}</span>
-              </div>
-            ))
+            <table className="appointment-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Time</th>
+                  <th>Patient</th>
+                  <th>Phone</th>
+                  <th>Reason</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleAppointments.map((appointment) => (
+                  <Fragment key={appointment.id}>
+                    <tr>
+                      <td>{appointment.appointmentDate}</td>
+                      <td>{appointment.appointmentTime.slice(0, 5)}</td>
+                      <td>{appointment.patientName}</td>
+                      <td>{appointment.patientPhone || 'Not provided'}</td>
+                      <td>{appointment.reason}</td>
+                      <td><span className="status-chip">{formatStatus(appointment.status)}</span></td>
+                      <td>
+                        <div className="table-actions">
+                          {appointment.status === 'PENDING' ? (
+                            <button
+                              className="secondary-button"
+                              type="button"
+                              onClick={() => markAppointmentCompleted(appointment.id)}
+                            >
+                              Complete
+                            </button>
+                          ) : (
+                            <span className="empty-note">Done</span>
+                          )}
+                          {appointment.status !== 'CANCELLED' && !prescriptionsByAppointmentId.has(appointment.id) && (
+                            <button
+                              className="secondary-button"
+                              type="button"
+                              onClick={() => startPrescription(appointment)}
+                            >
+                              Prescribe
+                            </button>
+                          )}
+                          {prescriptionsByAppointmentId.has(appointment.id) && (
+                            <>
+                              <button
+                                className="secondary-button"
+                                type="button"
+                                onClick={() => startEditPrescription(prescriptionsByAppointmentId.get(appointment.id))}
+                              >
+                                Edit Prescription
+                              </button>
+                              {appointment.status !== 'COMPLETED' && (
+                                <button
+                                  className="danger-button"
+                                  type="button"
+                                  onClick={() => removePrescription(prescriptionsByAppointmentId.get(appointment.id).id)}
+                                >
+                                  Delete
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                    {prescriptionForm.appointmentId === appointment.id && (
+                      <tr>
+                        <td colSpan="7">
+                          {renderPrescriptionForm(appointment)}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
           )}
         </div>
 
         {message && <p className="form-message neutral">{message}</p>}
       </article>
+    )
+  }
+
+  function renderPrescriptionForm(appointment) {
+    return (
+      <form className="prescription-form" onSubmit={submitPrescription}>
+        <div className="prescription-form-header">
+          <div>
+            <strong>Prescription for {appointment.patientName}</strong>
+            <span>{appointment.appointmentDate} at {appointment.appointmentTime.slice(0, 5)}</span>
+          </div>
+          <button className="secondary-button" type="button" onClick={() => setPrescriptionForm(initialPrescriptionForm)}>
+            Close
+          </button>
+        </div>
+
+        <label>
+          Diagnosis
+          <input
+            name="diagnosis"
+            onChange={updatePrescriptionForm}
+            required
+            value={prescriptionForm.diagnosis}
+          />
+        </label>
+
+        <label>
+          Notes
+          <textarea
+            name="notes"
+            onChange={updatePrescriptionForm}
+            rows="2"
+            value={prescriptionForm.notes}
+          />
+        </label>
+
+        <div className="prescription-items">
+          {prescriptionForm.items.map((item, index) => (
+            <div className="prescription-item-row" key={`medicine-${index}`}>
+              <label>
+                Medicine
+                <select
+                  name="medicineName"
+                  onChange={(event) => updatePrescriptionItem(index, event)}
+                  required
+                  value={item.medicineName}
+                >
+                  <option value="">Select medicine</option>
+                  {medicines.map((medicine) => (
+                    <option key={medicine.id} value={medicine.name}>
+                      {formatMedicineOption(medicine)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Dosage
+                <input
+                  name="dosage"
+                  onChange={(event) => updatePrescriptionItem(index, event)}
+                  placeholder="500mg"
+                  required
+                  value={item.dosage}
+                />
+              </label>
+              <label>
+                Frequency
+                <input
+                  name="frequency"
+                  onChange={(event) => updatePrescriptionItem(index, event)}
+                  placeholder="3 times daily"
+                  required
+                  value={item.frequency}
+                />
+              </label>
+              <label>
+                Duration
+                <input
+                  name="duration"
+                  onChange={(event) => updatePrescriptionItem(index, event)}
+                  placeholder="5 days"
+                  required
+                  value={item.duration}
+                />
+              </label>
+              <label>
+                Instructions
+                <input
+                  name="instructions"
+                  onChange={(event) => updatePrescriptionItem(index, event)}
+                  placeholder="After meals"
+                  value={item.instructions}
+                />
+              </label>
+              {prescriptionForm.items.length > 1 && (
+                <button className="secondary-button" type="button" onClick={() => removePrescriptionItem(index)}>
+                  Remove
+                </button>
+                      )}
+            </div>
+          ))}
+        </div>
+
+        <div className="table-actions">
+          <button className="secondary-button" type="button" onClick={addPrescriptionItem}>
+            Add Medicine
+          </button>
+          <button type="submit">
+            {prescriptionForm.id ? 'Update Prescription' : 'Save Prescription'}
+          </button>
+        </div>
+      </form>
     )
   }
 
@@ -450,17 +825,43 @@ function getStatusLabel(status) {
   return 'Available'
 }
 
-function isIncomingAppointment(date, time) {
-  return new Date(`${date}T${time}`) >= new Date()
+function compareAppointments(first, second, sortOrder = 'LATEST') {
+  const firstTime = new Date(`${first.appointmentDate}T${first.appointmentTime}`).getTime()
+  const secondTime = new Date(`${second.appointmentDate}T${second.appointmentTime}`).getTime()
+
+  return sortOrder === 'LATEST' ? secondTime - firstTime : firstTime - secondTime
 }
 
-function compareAppointments(first, second) {
-  return new Date(`${first.appointmentDate}T${first.appointmentTime}`)
-    - new Date(`${second.appointmentDate}T${second.appointmentTime}`)
+function formatStatus(status) {
+  if (!status) {
+    return 'Pending'
+  }
+
+  return status
+    .toLowerCase()
+    .replace(/^\w/, (letter) => letter.toUpperCase())
 }
 
-function formatAppointmentTime(appointment) {
-  return `${appointment.appointmentDate} ${appointment.appointmentTime.slice(0, 5)}`
+function formatMedicineOption(medicine) {
+  const details = [
+    medicine.strength,
+    medicine.unit,
+    `RM ${Number(medicine.price || 0).toFixed(2)}`,
+    `${medicine.stockQuantity} in stock`,
+  ]
+    .filter(Boolean)
+    .join(' - ')
+
+  return details ? `${medicine.name} (${details})` : medicine.name
+}
+
+function prescriptionPayload(form) {
+  return {
+    appointmentId: form.appointmentId,
+    diagnosis: form.diagnosis,
+    notes: form.notes,
+    items: form.items,
+  }
 }
 
 function getTodayDate() {

@@ -6,6 +6,7 @@ import com.hospital.backend.doctor.DoctorUnavailabilityRepository;
 import com.hospital.backend.patient.PatientRepository;
 import jakarta.transaction.Transactional;
 import java.security.Principal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
@@ -19,6 +20,7 @@ import org.springframework.web.server.ResponseStatusException;
 public class AppointmentService {
 
     private static final Set<LocalTime> ALLOWED_APPOINTMENT_TIMES = Set.of(
+            LocalTime.of(8, 0),
             LocalTime.of(9, 0),
             LocalTime.of(10, 0),
             LocalTime.of(11, 0),
@@ -27,7 +29,9 @@ public class AppointmentService {
             LocalTime.of(14, 0),
             LocalTime.of(15, 0),
             LocalTime.of(16, 0),
-            LocalTime.of(17, 0)
+            LocalTime.of(17, 0),
+            LocalTime.of(18, 0),
+            LocalTime.of(19, 0)
     );
 
     private final AppointmentRepository appointmentRepository;
@@ -49,7 +53,7 @@ public class AppointmentService {
 
     @Transactional
     public AppointmentResponse bookAppointment(AppointmentRequest request, Principal principal) {
-        validateAppointmentTime(request);
+        validatePatientAppointmentTime(request);
 
         var patient = patientRepository.findByUserEmailIgnoreCase(principal.getName())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN, "Only patients can book appointments"));
@@ -65,14 +69,13 @@ public class AppointmentService {
         appointment.setAppointmentTime(request.appointmentTime());
         appointment.setReason(request.reason());
         appointment.setNotes(request.notes());
-        appointment.setContactNumber(request.contactNumber());
 
         return toResponse(appointmentRepository.save(appointment));
     }
 
     @Transactional
     public AppointmentResponse createDoctorAppointment(DoctorAppointmentRequest request, Principal principal) {
-        validateAppointmentTime(request.toAppointmentRequest());
+        validateStaffAppointmentTime(request.toAppointmentRequest());
 
         var doctor = doctorRepository.findByUserEmailIgnoreCase(principal.getName())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN, "Only doctors can create appointments"));
@@ -91,34 +94,87 @@ public class AppointmentService {
         appointment.setAppointmentTime(request.appointmentTime());
         appointment.setReason(request.reason());
         appointment.setNotes(request.notes());
-        appointment.setContactNumber(request.contactNumber());
 
         return toResponse(appointmentRepository.save(appointment));
     }
 
+    @Transactional
+    public List<AppointmentResponse> allAppointments() {
+        var appointments = appointmentRepository.findAllByOrderByAppointmentDateDescAppointmentTimeDesc();
+        completePastAppointments(appointments);
+        return appointments
+                .stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
+    @Transactional
     public List<AppointmentResponse> myAppointments(Principal principal) {
-        return appointmentRepository
-                .findByPatientUserEmailIgnoreCaseOrderByAppointmentDateAscAppointmentTimeAsc(principal.getName())
+        var appointments = appointmentRepository.findByPatientUserEmailIgnoreCaseOrderByAppointmentDateAscAppointmentTimeAsc(principal.getName());
+        completePastAppointments(appointments);
+        return appointments
                 .stream()
                 .map(this::toResponse)
                 .toList();
     }
 
+    @Transactional
     public List<AppointmentResponse> myDoctorAppointments(Principal principal) {
-        return appointmentRepository
-                .findByDoctorUserEmailIgnoreCaseOrderByAppointmentDateAscAppointmentTimeAsc(principal.getName())
+        var appointments = appointmentRepository.findByDoctorUserEmailIgnoreCaseOrderByAppointmentDateAscAppointmentTimeAsc(principal.getName());
+        completePastAppointments(appointments);
+        return appointments
                 .stream()
                 .map(this::toResponse)
                 .toList();
     }
 
-    private void validateAppointmentTime(AppointmentRequest request) {
-        if (!ALLOWED_APPOINTMENT_TIMES.contains(request.appointmentTime())) {
+    @Transactional
+    public AppointmentResponse completeDoctorAppointment(UUID appointmentId, Principal principal) {
+        var appointment = appointmentRepository.findById(appointmentId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Appointment not found"));
+
+        if (appointment.getDoctor() == null || !appointment.getDoctor().getUser().getEmail().equalsIgnoreCase(principal.getName())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You can only complete your own appointments");
+        }
+
+        appointment.setStatus("COMPLETED");
+        return toResponse(appointment);
+    }
+
+    @Transactional
+    public AppointmentResponse rescheduleAppointment(UUID appointmentId, RescheduleAppointmentRequest request, Principal principal) {
+        var appointment = patientOwnedPendingAppointment(appointmentId, principal);
+        validatePatientAppointmentTime(request.toAppointmentRequest(appointment));
+
+        if (appointment.getDoctor() != null) {
+            ensureDoctorAvailable(appointment.getDoctor().getId(), request.appointmentDate(), request.appointmentTime(), appointment.getId());
+        }
+
+        appointment.setAppointmentDate(request.appointmentDate());
+        appointment.setAppointmentTime(request.appointmentTime());
+        return toResponse(appointment);
+    }
+
+    @Transactional
+    public AppointmentResponse cancelAppointment(UUID appointmentId, Principal principal) {
+        var appointment = patientOwnedPendingAppointment(appointmentId, principal);
+        appointment.setStatus("CANCELLED");
+        return toResponse(appointment);
+    }
+
+    private void validatePatientAppointmentTime(AppointmentRequest request) {
+        validateAllowedAppointmentSlot(request.appointmentTime());
+
+        if (request.appointmentDate().isBefore(LocalDate.now().plusDays(1))) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
-                    "Please choose one of the available appointment slots"
+                    "Appointments must be booked at least 1 day before the visit date"
             );
         }
+    }
+
+    private void validateStaffAppointmentTime(AppointmentRequest request) {
+        validateAllowedAppointmentSlot(request.appointmentTime());
 
         var requestedDateTime = LocalDateTime.of(request.appointmentDate(), request.appointmentTime());
         var earliestAllowed = LocalDateTime.now().plusHours(1);
@@ -127,6 +183,15 @@ public class AppointmentService {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
                     "Appointments must be booked at least 1 hour from now"
+            );
+        }
+    }
+
+    private void validateAllowedAppointmentSlot(LocalTime appointmentTime) {
+        if (!ALLOWED_APPOINTMENT_TIMES.contains(appointmentTime)) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Please choose one of the available appointment slots"
             );
         }
     }
@@ -143,26 +208,61 @@ public class AppointmentService {
         return doctor;
     }
 
+    private Appointment patientOwnedPendingAppointment(UUID appointmentId, Principal principal) {
+        var appointment = appointmentRepository.findById(appointmentId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Appointment not found"));
+
+        if (!appointment.getPatient().getUser().getEmail().equalsIgnoreCase(principal.getName())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You can only manage your own appointments");
+        }
+
+        if (!"PENDING".equalsIgnoreCase(appointment.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only pending appointments can be changed");
+        }
+
+        return appointment;
+    }
+
+    private void completePastAppointments(List<Appointment> appointments) {
+        var now = LocalDateTime.now();
+
+        appointments.stream()
+                .filter(appointment -> "PENDING".equalsIgnoreCase(appointment.getStatus()))
+                .filter(appointment -> LocalDateTime.of(appointment.getAppointmentDate(), appointment.getAppointmentTime()).plusHours(1).isBefore(now))
+                .forEach(appointment -> appointment.setStatus("COMPLETED"));
+    }
+
     private void ensureDoctorAvailable(UUID doctorId, java.time.LocalDate date, LocalTime time) {
+        ensureDoctorAvailable(doctorId, date, time, null);
+    }
+
+    private void ensureDoctorAvailable(UUID doctorId, java.time.LocalDate date, LocalTime time, UUID excludedAppointmentId) {
         if (unavailabilityRepository.existsByDoctorIdAndUnavailableDateAndStartTime(doctorId, date, time)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selected doctor is unavailable for this slot");
         }
 
-        if (appointmentRepository.existsByDoctorIdAndAppointmentDateAndAppointmentTime(doctorId, date, time)) {
+        var isBooked = excludedAppointmentId == null
+                ? appointmentRepository.existsByDoctorIdAndAppointmentDateAndAppointmentTimeAndStatus(doctorId, date, time, "PENDING")
+                : appointmentRepository.existsPendingDoctorSlotExcludingAppointment(doctorId, date, time, excludedAppointmentId);
+
+        if (isBooked) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Selected doctor is already booked for this slot");
         }
     }
 
     private AppointmentResponse toResponse(Appointment appointment) {
+        var patientUser = appointment.getPatient().getUser();
         return new AppointmentResponse(
                 appointment.getId(),
+                patientUser.getFullName(),
+                patientUser.getPhone(),
+                appointment.getDoctor() == null ? null : appointment.getDoctor().getId(),
                 appointment.getDepartment(),
                 appointment.getPreferredDoctor(),
                 appointment.getAppointmentDate(),
                 appointment.getAppointmentTime(),
                 appointment.getReason(),
                 appointment.getNotes(),
-                appointment.getContactNumber(),
                 appointment.getStatus()
         );
     }

@@ -38,8 +38,77 @@ export async function createDoctorAppointment(token, payload) {
   return data
 }
 
+export async function completeDoctorAppointment(token, id) {
+  const response = await fetch(`${API_BASE_URL}/appointments/doctor/${id}/complete`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+
+  const data = await response.json().catch(() => null)
+
+  if (!response.ok) {
+    throw new Error(data?.message || data?.error || 'Unable to complete appointment')
+  }
+
+  return data
+}
+
+export async function rescheduleAppointment(token, id, payload) {
+  const response = await fetch(`${API_BASE_URL}/appointments/${id}/reschedule`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  })
+
+  const data = await response.json().catch(() => null)
+
+  if (!response.ok) {
+    throw new Error(data?.message || data?.error || 'Unable to reschedule appointment')
+  }
+
+  return data
+}
+
+export async function cancelAppointment(token, id) {
+  const response = await fetch(`${API_BASE_URL}/appointments/${id}/cancel`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+
+  const data = await response.json().catch(() => null)
+
+  if (!response.ok) {
+    throw new Error(data?.message || data?.error || 'Unable to cancel appointment')
+  }
+
+  return data
+}
+
 export async function getMyAppointments(token) {
   const response = await fetch(`${API_BASE_URL}/appointments/me`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+
+  const data = await response.json().catch(() => null)
+
+  if (!response.ok) {
+    throw new Error(data?.message || data?.error || 'Unable to load appointments')
+  }
+
+  return data
+}
+
+export async function getAdminAppointments(token) {
+  const response = await fetch(`${API_BASE_URL}/appointments/admin`, {
     headers: {
       Authorization: `Bearer ${token}`,
     },

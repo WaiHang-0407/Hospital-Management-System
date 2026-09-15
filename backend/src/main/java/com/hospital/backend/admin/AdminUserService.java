@@ -4,10 +4,23 @@ import com.hospital.backend.user.AppUser;
 import com.hospital.backend.user.AppUserRepository;
 import com.hospital.backend.user.Role;
 import com.hospital.backend.user.RoleRepository;
+import com.hospital.backend.appointment.Appointment;
+import com.hospital.backend.appointment.AppointmentRepository;
+import com.hospital.backend.appointment.AppointmentResponse;
+import com.hospital.backend.billing.Bill;
+import com.hospital.backend.billing.BillRepository;
+import com.hospital.backend.billing.BillResponse;
+import com.hospital.backend.billing.BillItem;
+import com.hospital.backend.billing.BillItemResponse;
 import com.hospital.backend.doctor.Doctor;
 import com.hospital.backend.doctor.DoctorRepository;
 import com.hospital.backend.patient.Patient;
 import com.hospital.backend.patient.PatientRepository;
+import com.hospital.backend.prescription.Prescription;
+import com.hospital.backend.prescription.PrescriptionItem;
+import com.hospital.backend.prescription.PrescriptionItemResponse;
+import com.hospital.backend.prescription.PrescriptionRepository;
+import com.hospital.backend.prescription.PrescriptionResponse;
 import jakarta.persistence.criteria.JoinType;
 import jakarta.transaction.Transactional;
 import java.security.Principal;
@@ -29,6 +42,9 @@ public class AdminUserService {
     private final RoleRepository roleRepository;
     private final DoctorRepository doctorRepository;
     private final PatientRepository patientRepository;
+    private final AppointmentRepository appointmentRepository;
+    private final PrescriptionRepository prescriptionRepository;
+    private final BillRepository billRepository;
     private final PasswordEncoder passwordEncoder;
 
     public AdminUserService(
@@ -36,12 +52,18 @@ public class AdminUserService {
             RoleRepository roleRepository,
             DoctorRepository doctorRepository,
             PatientRepository patientRepository,
+            AppointmentRepository appointmentRepository,
+            PrescriptionRepository prescriptionRepository,
+            BillRepository billRepository,
             PasswordEncoder passwordEncoder
     ) {
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
         this.doctorRepository = doctorRepository;
         this.patientRepository = patientRepository;
+        this.appointmentRepository = appointmentRepository;
+        this.prescriptionRepository = prescriptionRepository;
+        this.billRepository = billRepository;
         this.passwordEncoder = passwordEncoder;
     }
 
@@ -62,6 +84,32 @@ public class AdminUserService {
 
         return userRepository.findAll(buildSpecification(search, role, status), pageable)
                 .map(this::toResponse);
+    }
+
+    @Transactional
+    public AdminUserDetailResponse userDetails(UUID id) {
+        var user = findUser(id);
+        var email = user.getEmail();
+        var roleNames = user.getRoles().stream().map(Role::getName).toList();
+
+        var appointments = roleNames.contains("DOCTOR")
+                ? appointmentRepository.findByDoctorUserEmailIgnoreCaseOrderByAppointmentDateAscAppointmentTimeAsc(email)
+                : appointmentRepository.findByPatientUserEmailIgnoreCaseOrderByAppointmentDateAscAppointmentTimeAsc(email);
+
+        var prescriptions = roleNames.contains("DOCTOR")
+                ? prescriptionRepository.findByDoctorUserEmailIgnoreCaseOrderByCreatedAtDesc(email)
+                : prescriptionRepository.findByPatientUserEmailIgnoreCaseOrderByCreatedAtDesc(email);
+
+        var bills = roleNames.contains("PATIENT")
+                ? billRepository.findByPatientUserEmailIgnoreCaseOrderByCreatedAtDesc(email)
+                : java.util.List.<Bill>of();
+
+        return new AdminUserDetailResponse(
+                toResponse(user),
+                appointments.stream().map(this::toAppointmentResponse).toList(),
+                prescriptions.stream().map(this::toPrescriptionResponse).toList(),
+                bills.stream().map(this::toBillResponse).toList()
+        );
     }
 
     @Transactional
@@ -218,6 +266,81 @@ public class AdminUserService {
                 doctorRepository.findByUserId(user.getId())
                         .map(Doctor::getSpecialization)
                         .orElse(null)
+        );
+    }
+
+    private AppointmentResponse toAppointmentResponse(Appointment appointment) {
+        var patientUser = appointment.getPatient().getUser();
+        return new AppointmentResponse(
+                appointment.getId(),
+                patientUser.getFullName(),
+                patientUser.getPhone(),
+                appointment.getDoctor() == null ? null : appointment.getDoctor().getId(),
+                appointment.getDepartment(),
+                appointment.getPreferredDoctor(),
+                appointment.getAppointmentDate(),
+                appointment.getAppointmentTime(),
+                appointment.getReason(),
+                appointment.getNotes(),
+                appointment.getStatus()
+        );
+    }
+
+    private PrescriptionResponse toPrescriptionResponse(Prescription prescription) {
+        var appointment = prescription.getAppointment();
+        return new PrescriptionResponse(
+                prescription.getId(),
+                appointment.getId(),
+                prescription.getPatient().getUser().getFullName(),
+                prescription.getDoctor().getUser().getFullName(),
+                appointment.getDepartment(),
+                appointment.getAppointmentDate(),
+                appointment.getAppointmentTime(),
+                prescription.getDiagnosis(),
+                prescription.getNotes(),
+                prescription.getCreatedAt(),
+                prescription.getItems().stream().map(this::toPrescriptionItemResponse).toList()
+        );
+    }
+
+    private PrescriptionItemResponse toPrescriptionItemResponse(PrescriptionItem item) {
+        return new PrescriptionItemResponse(
+                item.getId(),
+                item.getMedicineName(),
+                item.getDosage(),
+                item.getFrequency(),
+                item.getDuration(),
+                item.getInstructions()
+        );
+    }
+
+    private BillResponse toBillResponse(Bill bill) {
+        var appointment = bill.getAppointment();
+        return new BillResponse(
+                bill.getId(),
+                appointment.getId(),
+                bill.getPatient().getUser().getFullName(),
+                appointment.getPreferredDoctor(),
+                appointment.getDepartment(),
+                appointment.getAppointmentDate(),
+                appointment.getAppointmentTime(),
+                bill.getDescription(),
+                bill.getAmount(),
+                bill.getStatus(),
+                bill.getPaidAt(),
+                bill.getCreatedAt(),
+                bill.getItems().stream().map(this::toBillItemResponse).toList()
+        );
+    }
+
+    private BillItemResponse toBillItemResponse(BillItem item) {
+        return new BillItemResponse(
+                item.getId(),
+                item.getItemName(),
+                item.getItemType(),
+                item.getQuantity(),
+                item.getUnitPrice(),
+                item.getTotalPrice()
         );
     }
 }

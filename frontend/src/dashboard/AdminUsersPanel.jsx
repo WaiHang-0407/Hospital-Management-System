@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
 import {
   createAdminUser,
+  getAdminUserDetails,
   getAdminUsers,
   setUserEnabled,
   updateAdminUser,
@@ -42,6 +43,9 @@ function AdminUsersPanel({ token }) {
   const [message, setMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [editingUserId, setEditingUserId] = useState(null)
+  const [expandedUserId, setExpandedUserId] = useState(null)
+  const [userDetails, setUserDetails] = useState({})
+  const [detailsLoadingId, setDetailsLoadingId] = useState(null)
   const [editForm, setEditForm] = useState({ role: '', doctorSpecialization: '' })
   const [createForm, setCreateForm] = useState(initialCreateForm)
   const [isCreating, setIsCreating] = useState(false)
@@ -104,6 +108,31 @@ function AdminUsersPanel({ token }) {
       role: user.roles[0] || 'PATIENT',
       doctorSpecialization: user.doctorSpecialization || '',
     })
+  }
+
+  async function toggleUserDetails(user) {
+    if (expandedUserId === user.id) {
+      setExpandedUserId(null)
+      return
+    }
+
+    setExpandedUserId(user.id)
+    setMessage('')
+
+    if (userDetails[user.id]) {
+      return
+    }
+
+    setDetailsLoadingId(user.id)
+
+    try {
+      const details = await getAdminUserDetails(token, user.id)
+      setUserDetails((current) => ({ ...current, [user.id]: details }))
+    } catch (error) {
+      setMessage(error.message)
+    } finally {
+      setDetailsLoadingId(null)
+    }
   }
 
   function cancelEditing() {
@@ -305,76 +334,90 @@ function AdminUsersPanel({ token }) {
           </thead>
           <tbody>
             {users.map((user) => (
-              <tr key={user.id}>
-                <td>
-                  <strong>{user.fullName}</strong>
-                  <span>{user.phone || 'No phone'}</span>
-                </td>
-                <td>{user.email}</td>
-                <td>
-                  {editingUserId === user.id ? (
-                    <select name="role" onChange={updateEditForm} value={editForm.role}>
-                      {editableRoles.map((role) => (
-                        <option key={role} value={role}>{role}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <div className="role-list">
-                      {user.roles.map((role) => (
-                        <span className="mini-chip" key={role}>{role}</span>
-                      ))}
-                    </div>
-                  )}
-                </td>
-                <td>
-                  {editingUserId === user.id && editForm.role === 'DOCTOR' ? (
-                    <select
-                      name="doctorSpecialization"
-                      onChange={updateEditForm}
-                      required
-                      value={editForm.doctorSpecialization}
-                    >
-                      <option value="">Select specialist</option>
-                      {specializations.map((specialization) => (
-                        <option key={specialization} value={specialization}>
-                          {specialization}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    user.doctorSpecialization || '-'
-                  )}
-                </td>
-                <td>
-                  <span className={`mini-chip ${user.enabled ? 'active' : 'inactive'}`}>
-                    {user.enabled ? 'Active' : 'Inactive'}
-                  </span>
-                </td>
-                <td>{formatDate(user.createdAt)}</td>
-                <td>
-                  {editingUserId === user.id ? (
-                    <div className="table-actions">
-                      <button type="button" onClick={() => saveUser(user)}>Save</button>
-                      <button className="secondary-button" type="button" onClick={cancelEditing}>
-                        Cancel
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="table-actions">
-                      <button className="secondary-button" type="button" onClick={() => startEditing(user)}>
-                        Edit
-                      </button>
-                      <button
-                        className={user.enabled ? 'danger-button' : 'secondary-button'}
-                        type="button"
-                        onClick={() => toggleUser(user)}
+              <Fragment key={user.id}>
+                <tr className="clickable-row" onClick={() => toggleUserDetails(user)}>
+                  <td>
+                    <strong>{user.fullName}</strong>
+                    <span>{user.phone || 'No phone'}</span>
+                  </td>
+                  <td>{user.email}</td>
+                  <td>
+                    {editingUserId === user.id ? (
+                      <select name="role" onChange={updateEditForm} onClick={(event) => event.stopPropagation()} value={editForm.role}>
+                        {editableRoles.map((role) => (
+                          <option key={role} value={role}>{role}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="role-list">
+                        {user.roles.map((role) => (
+                          <span className="mini-chip" key={role}>{role}</span>
+                        ))}
+                      </div>
+                    )}
+                  </td>
+                  <td>
+                    {editingUserId === user.id && editForm.role === 'DOCTOR' ? (
+                      <select
+                        name="doctorSpecialization"
+                        onChange={updateEditForm}
+                        onClick={(event) => event.stopPropagation()}
+                        required
+                        value={editForm.doctorSpecialization}
                       >
-                        {user.enabled ? 'Deactivate' : 'Activate'}
-                      </button>
-                    </div>
-                  )}
-                </td>
-              </tr>
+                        <option value="">Select specialist</option>
+                        {specializations.map((specialization) => (
+                          <option key={specialization} value={specialization}>
+                            {specialization}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      user.doctorSpecialization || '-'
+                    )}
+                  </td>
+                  <td>
+                    <span className={`mini-chip ${user.enabled ? 'active' : 'inactive'}`}>
+                      {user.enabled ? 'Active' : 'Inactive'}
+                    </span>
+                  </td>
+                  <td>{formatDate(user.createdAt)}</td>
+                  <td onClick={(event) => event.stopPropagation()}>
+                    {editingUserId === user.id ? (
+                      <div className="table-actions">
+                        <button type="button" onClick={() => saveUser(user)}>Save</button>
+                        <button className="secondary-button" type="button" onClick={cancelEditing}>
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="table-actions">
+                        <button className="secondary-button" type="button" onClick={() => startEditing(user)}>
+                          Edit
+                        </button>
+                        <button
+                          className={user.enabled ? 'danger-button' : 'secondary-button'}
+                          type="button"
+                          onClick={() => toggleUser(user)}
+                        >
+                          {user.enabled ? 'Deactivate' : 'Activate'}
+                        </button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+                {expandedUserId === user.id && (
+                  <tr>
+                    <td colSpan="7">
+                      {detailsLoadingId === user.id ? (
+                        <p className="empty-note">Loading user details...</p>
+                      ) : (
+                        <UserDetailsPanel details={userDetails[user.id]} user={user} />
+                      )}
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
 
             {!isLoading && users.length === 0 && (
@@ -409,6 +452,153 @@ function AdminUsersPanel({ token }) {
   )
 }
 
+function UserDetailsPanel({ details, user }) {
+  if (!details) {
+    return <p className="empty-note">No details loaded.</p>
+  }
+
+  const isDoctor = user.roles.includes('DOCTOR')
+  const isPatient = user.roles.includes('PATIENT')
+
+  return (
+    <div className="admin-user-detail-shell">
+      <section className="admin-user-summary-card">
+        <div className="admin-user-summary-title">
+          <p className="eyebrow">Selected User</p>
+          <h3>{details.user.fullName}</h3>
+          <span>{details.user.email}</span>
+        </div>
+
+        <div className="role-list admin-user-summary-roles">
+          {details.user.roles.map((role) => (
+            <span className="mini-chip" key={role}>{role}</span>
+          ))}
+          <span className={`mini-chip ${details.user.enabled ? 'active' : 'inactive'}`}>
+            {details.user.enabled ? 'Active' : 'Inactive'}
+          </span>
+        </div>
+
+        <div className="admin-user-summary-grid">
+          <span>
+            <strong>Phone</strong>
+            {details.user.phone || '-'}
+          </span>
+          <span>
+            <strong>Created</strong>
+            {formatDate(details.user.createdAt)}
+          </span>
+          {isDoctor && (
+            <span>
+              <strong>Specialist</strong>
+              {details.user.doctorSpecialization || '-'}
+            </span>
+          )}
+          {isPatient && (
+            <span>
+              <strong>Patient Record</strong>
+              Registered
+            </span>
+          )}
+        </div>
+      </section>
+
+      <div className="admin-user-detail-grid">
+        <DetailSection
+          count={details.appointments.length}
+          emptyText="No appointments found."
+          title="Appointments"
+        >
+          {details.appointments.map((appointment) => (
+            <div className="admin-detail-row" key={appointment.id}>
+              <div>
+                <strong>{appointment.appointmentDate} at {appointment.appointmentTime.slice(0, 5)}</strong>
+                <span>{appointment.department || 'No department'}</span>
+              </div>
+              <div>
+                <strong>{appointment.reason || 'No reason provided'}</strong>
+                <span>{appointment.doctorName || appointment.patientName || 'No assigned person'}</span>
+              </div>
+              <span className="status-chip">{formatStatus(appointment.status)}</span>
+            </div>
+          ))}
+        </DetailSection>
+
+        <DetailSection
+          count={details.prescriptions.length}
+          emptyText="No prescriptions found."
+          title="Prescriptions / Medicine"
+        >
+          {details.prescriptions.map((prescription) => (
+            <div className="admin-detail-row" key={prescription.id}>
+              <div>
+                <strong>{prescription.diagnosis || 'No diagnosis recorded'}</strong>
+                <span>
+                  {prescription.appointmentDate
+                    ? `${prescription.appointmentDate} at ${prescription.appointmentTime.slice(0, 5)}`
+                    : 'No appointment date'}
+                </span>
+              </div>
+              <div className="medicine-chip-list">
+                {prescription.items.length === 0 ? (
+                  <span className="mini-chip inactive">No medicine</span>
+                ) : (
+                  prescription.items.map((item) => (
+                    <span className="mini-chip" key={item.id}>{item.medicineName}</span>
+                  ))
+                )}
+              </div>
+            </div>
+          ))}
+        </DetailSection>
+
+        {isPatient && (
+          <DetailSection
+            count={details.bills.length}
+            emptyText="No bills found."
+            title="Billing"
+          >
+            {details.bills.map((bill) => (
+              <div className="admin-detail-row" key={bill.id}>
+                <div>
+                  <strong>RM {Number(bill.amount).toFixed(2)}</strong>
+                  <span>{bill.appointmentDate || 'No appointment date'}</span>
+                </div>
+                <div className="medicine-chip-list">
+                  {bill.items.length === 0 ? (
+                    <span className="mini-chip inactive">No bill items</span>
+                  ) : (
+                    bill.items.map((item) => (
+                      <span className="mini-chip" key={item.id}>{item.itemName}</span>
+                    ))
+                  )}
+                </div>
+                <span className="status-chip">{formatStatus(bill.status)}</span>
+              </div>
+            ))}
+          </DetailSection>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function DetailSection({ children, count, emptyText, title }) {
+  return (
+    <section className="admin-detail-card">
+      <div className="admin-detail-card-header">
+        <h3>{title}</h3>
+        <span className="mini-chip">{count}</span>
+      </div>
+
+      {count === 0 ? (
+        <p className="empty-note">{emptyText}</p>
+      ) : (
+        <div className="admin-detail-list">{children}</div>
+      )}
+    </section>
+  )
+}
+
 function formatDate(value) {
   if (!value) {
     return '-'
@@ -417,6 +607,12 @@ function formatDate(value) {
   return new Intl.DateTimeFormat('en-MY', {
     dateStyle: 'medium',
   }).format(new Date(value))
+}
+
+function formatStatus(status) {
+  return status
+    .toLowerCase()
+    .replace(/^\w/, (letter) => letter.toUpperCase())
 }
 
 export default AdminUsersPanel

@@ -41,6 +41,11 @@ public class AdminUserController {
         return adminUserService.findUsers(search, role, status, sort, direction, page, size);
     }
 
+    @GetMapping("/{id}/details")
+    public AdminUserDetailResponse userDetails(@PathVariable UUID id) {
+        return adminUserService.userDetails(id);
+    }
+
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public AdminUserResponse create(@Valid @RequestBody AdminUserCreateRequest request) {

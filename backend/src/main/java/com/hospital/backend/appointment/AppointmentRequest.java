@@ -14,7 +14,6 @@ public record AppointmentRequest(
         @NotNull @FutureOrPresent LocalDate appointmentDate,
         @NotNull LocalTime appointmentTime,
         @NotBlank String reason,
-        String notes,
-        String contactNumber
+        String notes
 ) {
 }

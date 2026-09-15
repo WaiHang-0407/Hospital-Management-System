@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { bookAppointment } from '../api/appointmentApi'
-import { getDoctorUnavailability, getDoctorsByDepartment } from '../api/doctorApi'
+import { getDoctorBookedSlots, getDoctorUnavailability, getDoctorsByDepartment } from '../api/doctorApi'
 
 const initialForm = {
   department: '',
@@ -9,7 +9,6 @@ const initialForm = {
   appointmentDate: '',
   appointmentTime: '',
   reason: '',
-  contactNumber: '',
   notes: '',
 }
 
@@ -23,6 +22,7 @@ const departments = [
 ]
 
 const appointmentSlots = [
+  { value: '08:00', label: '8:00 AM - 9:00 AM' },
   { value: '09:00', label: '9:00 AM - 10:00 AM' },
   { value: '10:00', label: '10:00 AM - 11:00 AM' },
   { value: '11:00', label: '11:00 AM - 12:00 PM' },
@@ -32,13 +32,17 @@ const appointmentSlots = [
   { value: '15:00', label: '3:00 PM - 4:00 PM' },
   { value: '16:00', label: '4:00 PM - 5:00 PM' },
   { value: '17:00', label: '5:00 PM - 6:00 PM' },
+  { value: '18:00', label: '6:00 PM - 7:00 PM' },
+  { value: '19:00', label: '7:00 PM - 8:00 PM' },
 ]
 
 function AppointmentBookingForm({ token, onBooked }) {
   const [form, setForm] = useState(initialForm)
   const [doctors, setDoctors] = useState([])
   const [doctorUnavailability, setDoctorUnavailability] = useState([])
+  const [doctorBookedSlots, setDoctorBookedSlots] = useState([])
   const [message, setMessage] = useState('')
+  const [confirmedAppointment, setConfirmedAppointment] = useState(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isLoadingDoctors, setIsLoadingDoctors] = useState(false)
 
@@ -79,15 +83,20 @@ function AppointmentBookingForm({ token, onBooked }) {
 
     let ignore = false
 
-    getDoctorUnavailability(token, form.doctorId, form.appointmentDate)
-      .then((data) => {
+    Promise.all([
+      getDoctorUnavailability(token, form.doctorId, form.appointmentDate),
+      getDoctorBookedSlots(token, form.doctorId, form.appointmentDate),
+    ])
+      .then(([unavailabilityData, bookedSlotData]) => {
         if (!ignore) {
-          setDoctorUnavailability(data)
+          setDoctorUnavailability(unavailabilityData)
+          setDoctorBookedSlots(bookedSlotData)
         }
       })
       .catch((error) => {
         if (!ignore) {
           setDoctorUnavailability([])
+          setDoctorBookedSlots([])
           setMessage(error.message)
         }
       })
@@ -102,11 +111,13 @@ function AppointmentBookingForm({ token, onBooked }) {
     if (name === 'department') {
       setDoctors([])
       setDoctorUnavailability([])
+      setDoctorBookedSlots([])
       setIsLoadingDoctors(Boolean(value))
     }
 
     if (name === 'appointmentDate') {
       setDoctorUnavailability([])
+      setDoctorBookedSlots([])
     }
 
     setForm((current) => ({
@@ -122,8 +133,8 @@ function AppointmentBookingForm({ token, onBooked }) {
     setIsSubmitting(true)
     setMessage('')
 
-    if (!isAppointmentTimeAllowed(form.appointmentDate, form.appointmentTime)) {
-      setMessage('Appointments must be booked at least 1 hour from now.')
+    if (!isAppointmentDateAllowed(form.appointmentDate)) {
+      setMessage('Appointments must be booked at least 1 day before the visit date.')
       setIsSubmitting(false)
       return
     }
@@ -132,6 +143,7 @@ function AppointmentBookingForm({ token, onBooked }) {
       const appointment = await bookAppointment(token, form)
       setForm(initialForm)
       setMessage('Appointment request submitted.')
+      setConfirmedAppointment(appointment)
       onBooked(appointment)
     } catch (error) {
       setMessage(error.message)
@@ -181,6 +193,7 @@ function AppointmentBookingForm({ token, onBooked }) {
                   appointmentTime: '',
                 }))
                 setDoctorUnavailability([])
+                setDoctorBookedSlots([])
               }}
               value={form.doctorId}
               disabled={!form.department || isLoadingDoctors}
@@ -199,7 +212,7 @@ function AppointmentBookingForm({ token, onBooked }) {
           <label>
             Date
             <input
-              min={new Date().toISOString().slice(0, 10)}
+              min={getTomorrowDate()}
               name="appointmentDate"
               onChange={updateForm}
               required
@@ -218,7 +231,7 @@ function AppointmentBookingForm({ token, onBooked }) {
               disabled={!form.appointmentDate}
             >
               <option value="">Select time slot</option>
-              {getAvailableSlots(form.appointmentDate, form.doctorId, doctorUnavailability).map((slot) => (
+              {getAvailableSlots(form.appointmentDate, form.doctorId, doctorUnavailability, doctorBookedSlots).map((slot) => (
                 <option key={slot.value} value={slot.value}>
                   {slot.label}
                 </option>
@@ -239,16 +252,6 @@ function AppointmentBookingForm({ token, onBooked }) {
         </label>
 
         <label>
-          Contact Number
-          <input
-            name="contactNumber"
-            onChange={updateForm}
-            placeholder="Phone number for confirmation"
-            value={form.contactNumber}
-          />
-        </label>
-
-        <label>
           Notes
           <textarea
             name="notes"
@@ -265,44 +268,95 @@ function AppointmentBookingForm({ token, onBooked }) {
           {isSubmitting ? 'Submitting...' : 'Request Appointment'}
         </button>
       </form>
+
+      {confirmedAppointment && (
+        <AppointmentConfirmation appointment={confirmedAppointment} />
+      )}
     </article>
   )
 }
 
-function isAppointmentTimeAllowed(date, time) {
-  if (!date || !time) {
+function AppointmentConfirmation({ appointment }) {
+  return (
+    <section className="appointment-confirmation">
+      <div className="appointment-confirmation-header">
+        <div>
+          <p className="eyebrow">Confirmed Request</p>
+          <h3>Appointment Details</h3>
+        </div>
+        <span className="status-chip">{formatStatus(appointment.status)}</span>
+      </div>
+
+      <div className="appointment-detail-grid">
+        <DetailItem label="Date" value={appointment.appointmentDate} />
+        <DetailItem label="Time" value={formatSlot(appointment.appointmentTime)} />
+        <DetailItem label="Department" value={appointment.department} />
+        <DetailItem label="Doctor" value={appointment.preferredDoctor || 'Any available doctor'} />
+        <DetailItem label="Reason" value={appointment.reason} />
+        <DetailItem label="Notes" value={appointment.notes || 'No notes provided'} />
+      </div>
+    </section>
+  )
+}
+
+function DetailItem({ label, value }) {
+  return (
+    <div>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  )
+}
+
+function isAppointmentDateAllowed(date) {
+  if (!date) {
     return false
   }
 
-  const requestedDateTime = new Date(`${date}T${time}`)
-  const earliestAllowed = new Date(Date.now() + 60 * 60 * 1000)
-  return requestedDateTime >= earliestAllowed
+  return date >= getTomorrowDate()
 }
 
-function getAvailableSlots(date, doctorId, unavailability) {
+function getAvailableSlots(date, doctorId, unavailability, bookedSlots) {
   if (!date) {
     return appointmentSlots
   }
 
-  const today = new Date().toISOString().slice(0, 10)
-  if (date !== today) {
-    return filterDoctorSlots(appointmentSlots, doctorId, unavailability)
-  }
-
-  const earliestAllowed = new Date(Date.now() + 60 * 60 * 1000)
-  return filterDoctorSlots(appointmentSlots, doctorId, unavailability).filter((slot) => {
-    const slotStart = new Date(`${date}T${slot.value}`)
-    return slotStart >= earliestAllowed
-  })
+  return filterDoctorSlots(appointmentSlots, doctorId, unavailability, bookedSlots)
 }
 
-function filterDoctorSlots(slots, doctorId, unavailability) {
+function filterDoctorSlots(slots, doctorId, unavailability, bookedSlots) {
   if (!doctorId) {
     return slots
   }
 
   const unavailableTimes = new Set(unavailability.map((slot) => slot.startTime.slice(0, 5)))
-  return slots.filter((slot) => !unavailableTimes.has(slot.value))
+  const bookedTimes = new Set(bookedSlots.map((slot) => slot.startTime.slice(0, 5)))
+  return slots.filter((slot) => !unavailableTimes.has(slot.value) && !bookedTimes.has(slot.value))
+}
+
+function formatSlot(value) {
+  const normalizedValue = value?.slice(0, 5)
+  const slot = appointmentSlots.find((item) => item.value === normalizedValue)
+  return slot?.label || normalizedValue || 'Not selected'
+}
+
+function formatStatus(status) {
+  if (!status) {
+    return 'Pending'
+  }
+
+  return status
+    .toLowerCase()
+    .replace(/^\w/, (letter) => letter.toUpperCase())
+}
+
+function getTomorrowDate() {
+  const tomorrow = new Date()
+  tomorrow.setDate(tomorrow.getDate() + 1)
+  const year = tomorrow.getFullYear()
+  const month = String(tomorrow.getMonth() + 1).padStart(2, '0')
+  const day = String(tomorrow.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 export default AppointmentBookingForm
